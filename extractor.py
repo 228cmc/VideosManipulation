@@ -1,46 +1,97 @@
 import os
 import re
-import sys
-from dotenv import load_dotenv
+import subprocess
+import cv2
 from youtube_transcript_api import YouTubeTranscriptApi
+from tqdm import tqdm
 
-# Load environment variables from .env file
-load_dotenv()
+class YouTubeProcessor:
+    def __init__(self, video_url, language="en", output_folder="screenshots", screenshot_interval=5):
+        self.video_url = video_url
+        self.language = language
+        self.output_folder = output_folder
+        self.screenshot_interval = screenshot_interval
+        self.video_id = self._extract_video_id()
+        self.video_path = None  
 
-# Extract video ID from the YouTube URL
-def get_video_id(url):
-    match = re.search(r"v=([a-zA-Z0-9_-]+)", url)
-    return match.group(1) if match else None
+        os.makedirs(self.output_folder, exist_ok=True)
 
-# Fetch and save subtitles in an .srt file
-def extract_subtitles(video_url, language="en"):
-    video_id = get_video_id(video_url)
-    if not video_id:
-        print("Error: Could not extract the video ID.")
-        return
+    def _extract_video_id(self):
+        """Extracts the video ID from a YouTube URL."""
+        match = re.search(r"v=([a-zA-Z0-9_-]+)", self.video_url)
+        return match.group(1) if match else None
 
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=[language])
+    def extract_subtitles(self):
+        """Extracts and saves subtitles in an .srt file."""
+        if not self.video_id:
+            print("Error: Could not extract the video ID.")
+            return None
 
-        with open(f"subtitles_{video_id}.srt", "w", encoding="utf-8") as file:
-            for i, line in enumerate(transcript, start=1):
-                start_time = line['start']
-                end_time = start_time + line['duration']
-                text = line['text']
-                file.write(f"{i}\n{start_time:.3f} --> {end_time:.3f}\n{text}\n\n")
+        try:
+            transcript = YouTubeTranscriptApi.get_transcript(self.video_id, languages=[self.language])
+            file_path = os.path.join(self.output_folder, f"subtitles_{self.video_id}.srt")
 
-        print(f"Subtitles saved as: subtitles_{video_id}.srt")
+            if not transcript:
+                print("Warning: No subtitles found for this video.")
+                return None
 
-    except Exception as e:
-        print(f"Error: {e}")
+            print(f"Writing subtitles to {file_path}...")
 
-# Main execution
-if __name__ == "__main__":
-    video_url = os.getenv("YOUTUBE_VIDEO_URL")
-    language = os.getenv("SUBTITLE_LANGUAGE", "en")  # Default to English
+            with open(file_path, "w", encoding="utf-8") as file:
+                for i, line in enumerate(transcript, start=1):
+                    start_time = line['start']
+                    end_time = start_time + line['duration']
+                    text = line['text']
+                    file.write(f"{i}\n{start_time:.3f} --> {end_time:.3f}\n{text}\n\n")
 
-    if not video_url:
-        print("Error: No video URL found in .env file. Please set YOUTUBE_VIDEO_URL.")
-        sys.exit(1)
+            print(f"Subtitles saved: {file_path}")
+            return file_path
+        except Exception as e:
+            print(f"Error extracting subtitles: {e}")
+            return None
 
-    extract_subtitles(video_url, language)
+    def download_video(self):
+        """Downloads the YouTube video using yt-dlp."""
+        if not self.video_id:
+            print("Error: Could not extract the video ID.")
+            return None
+
+        self.video_path = os.path.join(self.output_folder, f"{self.video_id}.mp4")
+
+        try:
+            print(f"Downloading video: {self.video_url}")
+            subprocess.run(
+                ["yt-dlp", "-f", "best", "-o", self.video_path, self.video_url],
+                check=True,
+            )
+            print(f"Video downloaded: {self.video_path}")
+            return self.video_path
+        except subprocess.CalledProcessError as e:
+            print(f"Error downloading video: {e}")
+            return None
+
+    def extract_screenshots(self):
+        """Extracts screenshots from video at the given interval."""
+        if not self.video_path or not os.path.exists(self.video_path):
+            print("Error: Video file not found.")
+            return
+
+        cap = cv2.VideoCapture(self.video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_interval = int(fps * self.screenshot_interval)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        print(f"Extracting screenshots every {self.screenshot_interval} seconds...")
+
+        for frame_number in tqdm(range(0, total_frames, frame_interval)):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            success, frame = cap.read()
+            if success:
+                timestamp = int(frame_number / fps)
+                screenshot_path = os.path.join(self.output_folder, f"screenshot_{timestamp}s.jpg")
+                cv2.imwrite(screenshot_path, frame)
+                print(f"Saved screenshot: {screenshot_path}")
+            else:
+                print(f"Error capturing screenshot at {timestamp}s")
+
+        cap.release()
