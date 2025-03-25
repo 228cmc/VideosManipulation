@@ -1,2 +1,4 @@
 YOUTUBE_VIDEO_URL=https://www.youtube.com/watch?v=fiI0gMGWlrQ
 SUBTITLE_LANGUAGE=en
+SCREENSHOT_INTERVAL=5  # Interval in seconds for screenshots
+OUTPUT_FOLDER=screenshots
